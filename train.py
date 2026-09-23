@@ -11,37 +11,54 @@ from main import UNet
 
 
 class SegmentationDataset(Dataset):
-  
-
     def __init__(self, images_dir, masks_dir, size=(572, 572)):
         self.images_dir = images_dir
         self.masks_dir = masks_dir
-        self.filenames = sorted(os.listdir(images_dir))
+        
+        valid_exts = ('.jpg', '.jpeg', '.png', '.bmp', '.webp')
+
+        # 1. Map mask file stems (filename without extension) to full mask filenames
+        mask_map = {
+            os.path.splitext(f)[0]: f
+            for f in os.listdir(masks_dir)
+            if f.lower().endswith(valid_exts)
+        }
+
+        # 2. Find matching image and mask pairs
+        self.pairs = []
+        for img_f in sorted(os.listdir(images_dir)):
+            if not img_f.lower().endswith(valid_exts):
+                continue  # Skip non-image files like .DS_Store
+            
+            stem = os.path.splitext(img_f)[0]
+            if stem in mask_map:
+                mask_f = mask_map[stem]
+                self.pairs.append((img_f, mask_f))
+            else:
+                print(f"Warning: No matching mask found for image '{img_f}' — skipping.")
 
         self.img_transform = transforms.Compose([
             transforms.Resize(size),
-            transforms.ToTensor(),  # -> float32 [0,1], shape (3, H, W)
+            transforms.ToTensor(),
         ])
-        # NEAREST interpolation for masks: resizing must never invent
-        # in-between pixel values (e.g. 0.37) at object edges -- a mask
-        # has to stay strictly 0 or 1.
+        
         self.mask_transform = transforms.Compose([
             transforms.Resize(size, interpolation=InterpolationMode.NEAREST),
-            transforms.ToTensor(),  # -> float32 [0,1], shape (1, H, W)
+            transforms.ToTensor(),
         ])
 
     def __len__(self):
-        return len(self.filenames)
+        return len(self.pairs)
 
     def __getitem__(self, idx):
-        fname = self.filenames[idx]
-        img = Image.open(os.path.join(self.images_dir, fname)).convert("RGB")
-        mask = Image.open(os.path.join(self.masks_dir, fname)).convert("L")
+        img_fname, mask_fname = self.pairs[idx]
+        
+        img = Image.open(os.path.join(self.images_dir, img_fname)).convert("RGB")
+        mask = Image.open(os.path.join(self.masks_dir, mask_fname)).convert("L")
 
         img = self.img_transform(img)
         mask = self.mask_transform(mask)
         return img, mask
-
 
 def evaluate(model, dataloader, device, criterion):
     """Computes average loss on a dataset WITHOUT updating any weights.
