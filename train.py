@@ -1,4 +1,5 @@
 import os
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,28 +8,32 @@ from torchvision import transforms
 from torchvision.transforms import InterpolationMode
 from PIL import Image
 
+
 from main import UNet
 
 
 class SegmentationDataset(Dataset):
+    
+
     def __init__(self, images_dir, masks_dir, size=(572, 572)):
         self.images_dir = images_dir
         self.masks_dir = masks_dir
+        self.size = size
         
         valid_exts = ('.jpg', '.jpeg', '.png', '.bmp', '.webp')
 
-        # 1. Map mask file stems (filename without extension) to full mask filenames
+        # Map mask file stems (e.g. 'cat1') to their full filenames
         mask_map = {
             os.path.splitext(f)[0]: f
             for f in os.listdir(masks_dir)
             if f.lower().endswith(valid_exts)
         }
 
-        # 2. Find matching image and mask pairs
+        # Match images to masks by filename stem
         self.pairs = []
         for img_f in sorted(os.listdir(images_dir)):
             if not img_f.lower().endswith(valid_exts):
-                continue  # Skip non-image files like .DS_Store
+                continue
             
             stem = os.path.splitext(img_f)[0]
             if stem in mask_map:
@@ -37,33 +42,36 @@ class SegmentationDataset(Dataset):
             else:
                 print(f"Warning: No matching mask found for image '{img_f}' — skipping.")
 
-        self.img_transform = transforms.Compose([
-            transforms.Resize(size),
-            transforms.ToTensor(),
-        ])
-        
-        self.mask_transform = transforms.Compose([
-            transforms.Resize(size, interpolation=InterpolationMode.NEAREST),
-            transforms.ToTensor(),
-        ])
-
     def __len__(self):
         return len(self.pairs)
 
     def __getitem__(self, idx):
         img_fname, mask_fname = self.pairs[idx]
         
+        # 1. Load images
         img = Image.open(os.path.join(self.images_dir, img_fname)).convert("RGB")
         mask = Image.open(os.path.join(self.masks_dir, mask_fname)).convert("L")
 
-        img = self.img_transform(img)
-        mask = self.mask_transform(mask)
-        return img, mask
+        # 2. Resize
+        img = img.resize(self.size, resample=Image.BILINEAR)
+        mask = mask.resize(self.size, resample=Image.NEAREST)
+
+        # 3. Convert Image to Tensor -> (3, H, W) normalized to [0.0, 1.0]
+        img_np = np.array(img, dtype=np.float32) / 255.0
+        img_tensor = torch.from_numpy(img_np).permute(2, 0, 1)
+
+        # 4. Convert Mask to Tensor -> (1, H, W)
+        mask_np = np.array(mask, dtype=np.float32)
+        mask_tensor = torch.from_numpy(mask_np).unsqueeze(0)
+
+        # Normalize mask values to strictly [0.0, 1.0] regardless of input format (0-255 vs 0-1)
+        if mask_tensor.max() > 1.0:
+            mask_tensor /= 255.0
+
+        return img_tensor, mask_tensor
 
 def evaluate(model, dataloader, device, criterion):
-    """Computes average loss on a dataset WITHOUT updating any weights.
-    Used for the held-out test set, so we can see how the model does on
-    images it never trained on."""
+   
     model.eval()        # inference mode
     running_loss = 0.0
 
@@ -133,7 +141,7 @@ if __name__ == "__main__":
 
     model = UNet(in_channels=3, num_classes=1).to(device)  # num_classes=1: binary sigmoid output, pairs cleanly with BCELoss
 
-    model = train(model, train_loader, test_loader, device, epochs=20, lr=1e-4)
+    model = train(model, train_loader, test_loader, device, epochs=200, lr=5e-4)
 
     torch.save(model.state_dict(), "unet_weights.pth")
     print("Training complete -- weights saved to unet_weights.pth")

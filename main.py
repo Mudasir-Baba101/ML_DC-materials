@@ -14,12 +14,12 @@ class EncoderBlock(nn.Module):
 
     def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=0)
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=0)#sliding kerrnel across image giving feature map
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=0)
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)#shrinking wala
 
     def forward(self, x):
-        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv1(x))#changees neg to pos, noise filter,adds non line
         x = F.relu(self.conv2(x))
         x = self.pool(x)
         return x
